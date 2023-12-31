@@ -1,19 +1,3 @@
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum TriStateBool {
-    True,
-    False,
-    Null,
-}
-impl std::ops::Not for TriStateBool {
-    type Output = Self;
-    fn not(self) -> Self::Output {
-        match self {
-            TriStateBool::True => TriStateBool::False,
-            TriStateBool::False => TriStateBool::True,
-            TriStateBool::Null => TriStateBool::Null,
-        }
-    }
-}
 pub fn parse_usize5(slice: &[u8]) -> usize {
     unsafe {
         let n0 = *(slice.get_unchecked(0)) as usize;
