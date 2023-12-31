@@ -304,7 +304,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::record::*;
-    use crate::MarcReader;
+    use crate::marcrecord::MarcReader;
     use std::io::BufReader;
     use std::io::Cursor;
     static STR : &[u8]= "00827nz  a2200241nc 4500\
