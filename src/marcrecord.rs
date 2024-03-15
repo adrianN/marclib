@@ -7,6 +7,8 @@ use std::io::SeekFrom;
 use crate::ownedrecord::OwnedRecord;
 use crate::record::*;
 
+const MARCHEADER_SIZE: usize = 24;
+
 #[derive(Debug)]
 pub struct MarcHeader<'s> {
     pub header: &'s [u8],
@@ -25,7 +27,7 @@ pub struct MarcRecordEntries<'s> {
 
 impl<'s> MarcHeader<'s> {
     pub fn new(data: &'s [u8]) -> MarcHeader {
-        assert!(data.len() == 24);
+        assert!(data.len() == MARCHEADER_SIZE);
         MarcHeader { header: data }
     }
 
@@ -102,7 +104,7 @@ impl<'s> MarcRecord<'s> {
     }
 
     pub fn record_length(&self) -> usize {
-        self.data.len() + 24
+        self.data.len() + MARCHEADER_SIZE
     }
     pub fn directory(&self) -> MarcDirectory<'s> {
         let directory_end = end_of_entry_position(&self.data);
@@ -233,6 +235,104 @@ pub struct MarcRecordBatch<'s> {
     pub records: Vec<MarcRecord<'s>>,
 }
 
+pub struct BufferedMarcReader<R>
+where
+    R: Read + Seek,
+{
+    base_reader: R,
+    buffer: Vec<u8>,
+    offset: usize,
+}
+
+impl<R> BufferedMarcReader<R>
+where
+    R: Read + Seek,
+{
+    pub fn new(reader: R) -> BufferedMarcReader<R> {
+        BufferedMarcReader {
+            base_reader: reader,
+            buffer: Vec::new(),
+            offset: 0,
+        }
+    }
+
+    pub fn get_header(&self) -> Option<MarcHeader> {
+        if self.buffer.len() - self.offset < MARCHEADER_SIZE {
+            return None;
+        }
+        Some(MarcHeader::new(
+            &self.buffer[self.offset..self.offset + MARCHEADER_SIZE],
+        ))
+    }
+
+    pub fn get(&self) -> Option<MarcRecord> {
+        let header = self.get_header()?;
+        let record_length = header.record_length();
+        if self.buffer.len() - self.offset < record_length {
+            return None;
+        }
+        Some(MarcRecord::new(
+            header,
+            &self.buffer[self.offset + MARCHEADER_SIZE..self.offset + record_length],
+        ))
+    }
+
+    /**
+     * Return true if we advanced successfully
+     */
+    pub fn advance(&mut self) -> Result<bool, std::io::Error> {
+        let current_record = self.get();
+        if let Some(record) = current_record {
+            // we already have a record in the buffer, advance to the next record
+            let record_length = record.header.record_length();
+            assert!(self.buffer.len() - self.offset >= record_length);
+            self.offset += record_length;
+            let success = self.refill_buffer(MARCHEADER_SIZE)?; // TODO EOF
+            if !success {
+                return Ok(false);
+            }
+            // and now read the next record
+            let next_record_length =
+                MarcHeader::new(&self.buffer[self.offset..self.offset + MARCHEADER_SIZE])
+                    .record_length();
+            self.refill_buffer(next_record_length)
+        } else {
+            // we don't have a record in the buffer, read one record
+            self.refill_buffer(MARCHEADER_SIZE)?;
+            if let Some(header) = self.get_header() {
+                self.refill_buffer(header.record_length())
+            } else {
+                Ok(false)
+            }
+        }
+    }
+
+    /**
+     * Returns true if we read at least read_size, false if we failed to do so
+     */
+    fn refill_buffer(&mut self, read_size: usize) -> Result<bool, std::io::Error> {
+        if self.buffer.len() - self.offset > read_size {
+            return Ok(true);
+        }
+        if self.offset != 0 {
+            // copy the end to the beginning
+            let mut i = 0;
+            for j in self.offset..self.buffer.len() {
+                self.buffer[i] = self.buffer[j];
+                i += 1;
+            }
+            self.buffer.truncate(self.buffer.len() - self.offset);
+            self.offset = 0;
+        }
+        let old_size = self.buffer.len();
+        self.buffer.resize(read_size, 0);
+        // fill the buffer
+        let read = self.base_reader.read(&mut self.buffer[old_size..])?;
+        self.buffer.truncate(read + old_size);
+        Ok(self.buffer.len() >= read_size)
+    }
+}
+
 #[derive(Debug)]
 pub struct MarcReader<R>
 where
@@ -263,15 +363,18 @@ where
         if read == 0 {
             return Ok(None);
         }
-        while i + 24 < read {
+        while i + MARCHEADER_SIZE < read {
             let header = MarcHeader {
-                header: &mem[i..i + 24],
+                header: &mem[i..i + MARCHEADER_SIZE],
             };
             let record_length = header.record_length();
             //assert!(record_length < mem.len());
             if record_length + i <= read {
                 // still fits in mem
-                records.push(MarcRecord::new(header, &mem[i + 24..i + record_length]));
+                records.push(MarcRecord::new(
+                    header,
+                    &mem[i + MARCHEADER_SIZE..i + record_length],
+                ));
                 i += record_length;
             } else {
                 break;
@@ -285,7 +388,7 @@ where
             ));
         }
         // mem full, backpedal
-        //self.base_reader.seek_relative(-24);
+        //self.base_reader.seek_relative(-MARCHEADER_SIZE);
         // TODO seek_relative is unstable in my version of rust
         self.base_reader
             .seek(SeekFrom::Start(start_pos + i as u64))?;
@@ -303,8 +406,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::marcrecord::*;
     use crate::record::*;
-    use crate::marcrecord::MarcReader;
     use std::io::BufReader;
     use std::io::Cursor;
     static STR : &[u8]= "00827nz  a2200241nc 4500\
@@ -327,6 +430,44 @@ mod tests {
 670001200533\
 913004000545\
 040000028DE-10120100106125650.0880701n||azznnbabn           | ana    |c7 a4000002-30http://d-nb.info/gnd/4000002-32gnd  a(DE-101)040000028  a(DE-588)4000002-3  z(DE-588c)4000002-39v:zg  aDE-101cDE-1019r:DE-101bgerd0832  agnd1  a31.9b2sswd  bs2gndgen  agqs04a621.3815379d:29t:2010-01-06223/ger  aA 302 D  0(DE-101)0402724270(DE-588)4027242-40https://d-nb.info/gnd/4027242-4aIntegrierte Schaltung4obal4https://d-nb.info/standards/elementset/gnd#broaderTermGeneralwriOberbegriff allgemein  aVorlage  SswdisaA 302 D0(DE-588c)4000002-3".as_bytes();
+
+    #[test]
+    fn read_one_buffered() -> Result<(), String> {
+        dbg!(STR.len());
+        let c = Cursor::new(STR);
+        let breader = BufReader::new(c);
+        let mut mreader = BufferedMarcReader::new(breader);
+        let success = mreader.advance().expect("io error");
+        assert!(success);
+        let record = mreader.get().unwrap();
+        assert_eq!(record.record_length(), 827);
+        let dir = record.directory();
+        dbg!(std::str::from_utf8(dir.directory).unwrap());
+        assert_eq!(dir.num_entries(), 18);
+        let entry_types = [
+            1, 3, 5, 8, 24, 35, 35, 35, 40, 42, 65, 75, 79, 83, 150, 550, 670, 913,
+        ];
+        let entry_lengths = [
+            10, 7, 17, 41, 51, 22, 22, 29, 40, 9, 16, 14, 9, 42, 12, 192, 12, 40,
+        ];
+        let entry_starts = [
+            0, 10, 17, 34, 75, 126, 148, 170, 199, 239, 248, 264, 278, 287, 329, 341, 533, 545,
+        ];
+
+        for i in 0..18 {
+            let entry = dir.get_entry(i);
+            dbg!(std::str::from_utf8(entry.entry).unwrap());
+            assert_eq!(entry.entry_type(), entry_types[i], "i {}", i);
+            assert_eq!(entry.len(), entry_lengths[i], "i {}", i);
+            assert_eq!(entry.start(), entry_starts[i], "i {}", i);
+        }
+        let mut it = record.field_iter(None);
+        let first = it.next().ok_or_else(|| "not enough elements")?;
+        let last = it.last().ok_or_else(|| "not enough elements")?;
+        assert_eq!(first.utf8_data(), "040000028");
+        assert_eq!(last.utf8_data(), "  SswdisaA 302 D0(DE-588c)4000002-3");
+        Ok(())
+    }
 
     #[test]
     fn read_one() -> Result<(), String> {

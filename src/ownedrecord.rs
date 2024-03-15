@@ -108,10 +108,10 @@ impl Record for OwnedRecord {
 
 #[cfg(test)]
 mod tests {
+    use crate::marcrecord::MarcReader;
     use crate::marcrecord::*;
     use crate::ownedrecord::*;
     use crate::record::*;
-    use crate::marcrecord::MarcReader;
     use std::io::BufReader;
     use std::io::Cursor;
     static STR : &[u8]= "00827nz  a2200241nc 4500\
