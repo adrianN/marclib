@@ -434,38 +434,50 @@ mod tests {
     #[test]
     fn read_one_buffered() -> Result<(), String> {
         dbg!(STR.len());
-        let c = Cursor::new(STR);
+        let mut bigStr = Vec::new();
+        for i in 0..2 {
+            bigStr.extend_from_slice(STR);
+        }
+        let len = bigStr.len();
+        bigStr[len - 4] = '$' as u8;
+        let c = Cursor::new(bigStr);
         let breader = BufReader::new(c);
         let mut mreader = BufferedMarcReader::new(breader);
-        let success = mreader.advance().expect("io error");
-        assert!(success);
-        let record = mreader.get().unwrap();
-        assert_eq!(record.record_length(), 827);
-        let dir = record.directory();
-        dbg!(std::str::from_utf8(dir.directory).unwrap());
-        assert_eq!(dir.num_entries(), 18);
-        let entry_types = [
-            1, 3, 5, 8, 24, 35, 35, 35, 40, 42, 65, 75, 79, 83, 150, 550, 670, 913,
-        ];
-        let entry_lengths = [
-            10, 7, 17, 41, 51, 22, 22, 29, 40, 9, 16, 14, 9, 42, 12, 192, 12, 40,
-        ];
-        let entry_starts = [
-            0, 10, 17, 34, 75, 126, 148, 170, 199, 239, 248, 264, 278, 287, 329, 341, 533, 545,
-        ];
+        for i in 0..2 {
+            let success = mreader.advance().expect("io error");
+            assert!(success);
+            let record = mreader.get().unwrap();
+            assert_eq!(record.record_length(), 827);
+            let dir = record.directory();
+            dbg!(std::str::from_utf8(dir.directory).unwrap());
+            assert_eq!(dir.num_entries(), 18);
+            let entry_types = [
+                1, 3, 5, 8, 24, 35, 35, 35, 40, 42, 65, 75, 79, 83, 150, 550, 670, 913,
+            ];
+            let entry_lengths = [
+                10, 7, 17, 41, 51, 22, 22, 29, 40, 9, 16, 14, 9, 42, 12, 192, 12, 40,
+            ];
+            let entry_starts = [
+                0, 10, 17, 34, 75, 126, 148, 170, 199, 239, 248, 264, 278, 287, 329, 341, 533, 545,
+            ];
 
-        for i in 0..18 {
-            let entry = dir.get_entry(i);
-            dbg!(std::str::from_utf8(entry.entry).unwrap());
-            assert_eq!(entry.entry_type(), entry_types[i], "i {}", i);
-            assert_eq!(entry.len(), entry_lengths[i], "i {}", i);
-            assert_eq!(entry.start(), entry_starts[i], "i {}", i);
+            for i in 0..18 {
+                let entry = dir.get_entry(i);
+                dbg!(std::str::from_utf8(entry.entry).unwrap());
+                assert_eq!(entry.entry_type(), entry_types[i], "i {}", i);
+                assert_eq!(entry.len(), entry_lengths[i], "i {}", i);
+                assert_eq!(entry.start(), entry_starts[i], "i {}", i);
+            }
+            let mut it = record.field_iter(None);
+            let first = it.next().ok_or_else(|| "not enough elements")?;
+            let last = it.last().ok_or_else(|| "not enough elements")?;
+            assert_eq!(first.utf8_data(), "040000028");
+            if i == 0 {
+                assert_eq!(last.utf8_data(), "  SswdisaA 302 D0(DE-588c)4000002-3");
+            } else {
+                assert_eq!(last.utf8_data(), "  SswdisaA 302 D0(DE-588c)4000002$3");
+            }
         }
-        let mut it = record.field_iter(None);
-        let first = it.next().ok_or_else(|| "not enough elements")?;
-        let last = it.last().ok_or_else(|| "not enough elements")?;
-        assert_eq!(first.utf8_data(), "040000028");
-        assert_eq!(last.utf8_data(), "  SswdisaA 302 D0(DE-588c)4000002-3");
         Ok(())
     }
 
