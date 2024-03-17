@@ -242,6 +242,7 @@ where
     base_reader: R,
     buffer: Vec<u8>,
     offset: usize,
+    eof: bool,
 }
 
 impl<R> BufferedMarcReader<R>
@@ -253,7 +254,12 @@ where
             base_reader: reader,
             buffer: Vec::new(),
             offset: 0,
+            eof: false,
         }
+    }
+
+    pub fn is_eof(&self) -> bool {
+        return self.eof;
     }
 
     pub fn get_header(&self) -> Option<MarcHeader> {
@@ -289,21 +295,22 @@ where
             self.offset += record_length;
             let success = self.refill_buffer(MARCHEADER_SIZE)?; // TODO EOF
             if !success {
+                assert!(self.eof);
                 return Ok(false);
             }
             // and now read the next record
             let next_record_length =
                 MarcHeader::new(&self.buffer[self.offset..self.offset + MARCHEADER_SIZE])
                     .record_length();
-            self.refill_buffer(next_record_length)
+            let success = self.refill_buffer(next_record_length)?;
+            Ok(!self.eof)
         } else {
             // we don't have a record in the buffer, read one record
             self.refill_buffer(MARCHEADER_SIZE)?;
             if let Some(header) = self.get_header() {
-                self.refill_buffer(header.record_length())
-            } else {
-                Ok(false)
+                self.refill_buffer(header.record_length())?;
             }
+            Ok(!self.eof)
         }
     }
 
@@ -329,6 +336,7 @@ where
         // fill the buffer
         let read = self.base_reader.read(&mut self.buffer[old_size..])?;
         self.buffer.truncate(read + old_size);
+        self.eof = self.buffer.len() < read_size;
         Ok(self.buffer.len() >= read_size)
     }
 }
@@ -443,8 +451,10 @@ mod tests {
         let c = Cursor::new(bigStr);
         let breader = BufReader::new(c);
         let mut mreader = BufferedMarcReader::new(breader);
+        assert!(!mreader.is_eof());
         for i in 0..2 {
             let success = mreader.advance().expect("io error");
+            assert!(!mreader.is_eof());
             assert!(success);
             let record = mreader.get().unwrap();
             assert_eq!(record.record_length(), 827);
@@ -478,6 +488,10 @@ mod tests {
                 assert_eq!(last.utf8_data(), "  SswdisaA 302 D0(DE-588c)4000002$3");
             }
         }
+        let success = mreader.advance().expect("io error");
+        assert!(!success);
+
+        assert!(mreader.is_eof());
         Ok(())
     }
 
