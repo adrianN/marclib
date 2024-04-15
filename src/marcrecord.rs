@@ -1,5 +1,4 @@
 use crate::util::*;
-use memchr::memchr;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
@@ -76,15 +75,6 @@ impl<'s> MarcDirectory<'s> {
     pub fn byte_len(&self) -> usize {
         self.directory.len()
     }
-}
-
-fn end_of_entry_position(data: &[u8]) -> Option<usize> {
-    // data.iter().position(|&x| x == b'\x1e')
-    memchr(b'\x1e', data)
-}
-
-fn end_of_subfield_position(data: &[u8]) -> Option<usize> {
-    data.iter().position(|&x| x == b'\x1f')
 }
 
 impl<'s> MarcRecord<'s> {

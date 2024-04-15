@@ -1,3 +1,13 @@
+use memchr::memchr;
+pub fn end_of_entry_position(data: &[u8]) -> Option<usize> {
+    // data.iter().position(|&x| x == b'\x1e')
+    memchr(b'\x1e', data)
+}
+
+pub fn end_of_subfield_position(data: &[u8]) -> Option<usize> {
+    memchr(b'\x1f', data)
+    //data.iter().position(|&x| x == b'\x1f')
+}
 pub struct OwnedRecordField {
     pub field_type: usize,
     pub data: Vec<u8>,
@@ -17,6 +27,56 @@ impl<'s> RecordField<'s> {
             field_type: self.field_type,
             data: self.data.to_vec(),
         }
+    }
+    pub fn is_data_field_type(field_type: usize) -> bool {
+        // we have three digits for the tag, two leading zeros mean control type
+        field_type >= 10
+    }
+
+    pub fn has_subfields(&self) -> bool {
+        end_of_subfield_position(self.data).is_some()
+    }
+    /** For variable data fields, the first or second indicator, None for other fields **/
+    pub fn indicator(&self, i: usize) -> Option<u8> {
+        if !self.has_subfields() {
+            return None;
+        }
+        assert!(i < 2);
+        Some(self.data[i])
+    }
+    pub fn subfield_iter(&self) -> SubfieldIter<'s> {
+        SubfieldIter { data: self.data }
+    }
+}
+
+pub struct Subfield<'s> {
+    data: &'s [u8],
+}
+
+pub struct SubfieldIter<'s> {
+    data: &'s [u8],
+}
+
+impl<'s> Iterator for SubfieldIter<'s> {
+    type Item = Subfield<'s>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(pos) = end_of_subfield_position(self.data) {
+            let r = &self.data[0..pos];
+            self.data = &self.data[pos + 1..];
+            Some(Subfield { data: r })
+        } else if self.data.len() > 0 {
+            let r = &self.data[0..];
+            self.data = &[];
+            Some(Subfield { data: r })
+        } else {
+            None
+        }
+    }
+}
+
+impl<'s> Subfield<'s> {
+    pub fn utf8_data(&self) -> &str {
+        std::str::from_utf8(self.data).unwrap()
     }
 }
 
