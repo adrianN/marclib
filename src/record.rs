@@ -64,7 +64,7 @@ impl<'s> Iterator for SubfieldIter<'s> {
             let r = &self.data[0..pos];
             self.data = &self.data[pos + 1..];
             Some(Subfield { data: r })
-        } else if self.data.len() > 0 {
+        } else if !self.data.is_empty() {
             let r = &self.data[0..];
             self.data = &[];
             Some(Subfield { data: r })
